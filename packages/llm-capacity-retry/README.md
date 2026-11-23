@@ -70,7 +70,7 @@ default is used.
 ## Tests
 
 ```sh
-node --test test/          # 21 unit tests, no DSH process needed
+node --test test/*.test.js   # 21 unit tests, no DSH process needed
 node scripts/integration.mjs  # real llm/stream waterfall in the installed DSH
 ```
 
@@ -89,7 +89,7 @@ pause. Point `DSH_ROOT` elsewhere to check another installation.
 
 ## Verification
 
-- `node --test test/`: 21 unit tests pass.
+- `node --test test/*.test.js`: 21 unit tests pass.
 - `node scripts/integration.mjs`: the real `@deepseek-ai/dsh-llm` service, mounted
   in a bare Cordis context with this plugin, reclassifies a fake adapter's
   capacity refusal through the real `llm/stream` waterfall (code, message and

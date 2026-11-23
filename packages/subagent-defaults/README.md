@@ -53,7 +53,7 @@ a restart.
 ## Tests
 
 ```sh
-node --test test/
+node --test test/*.test.js
 ```
 
 The eight tests cover the inheritance checks, seeded and non-subagent sessions,

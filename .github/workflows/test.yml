@@ -18,4 +18,4 @@ jobs:
           node-version: 22
       # Unit tests only: the llm-capacity-retry integration test boots the
       # installed DeepSeek Harness, which CI does not have.
-      - run: node --test packages/subagent-defaults/test/ packages/gpt-apply-patch/test/ packages/llm-capacity-retry/test/
+      - run: node --test packages/*/test/*.test.js

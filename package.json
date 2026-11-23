@@ -12,7 +12,7 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "node --test packages/subagent-defaults/test/ packages/gpt-apply-patch/test/ packages/llm-capacity-retry/test/",
+    "test": "node --test packages/*/test/*.test.js",
     "test:integration": "node packages/llm-capacity-retry/scripts/integration.mjs"
   }
 }

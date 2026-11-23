@@ -67,9 +67,7 @@ one exists, and a README that the Plugin Manager detail page falls back to.
 ## Tests
 
 ```sh
-node --test packages/subagent-defaults/test/ \
-           packages/gpt-apply-patch/test/ \
-           packages/llm-capacity-retry/test/
+node --test packages/*/test/*.test.js
 ```
 
 `packages/llm-capacity-retry/scripts/integration.mjs` additionally boots the

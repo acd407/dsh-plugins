@@ -63,7 +63,7 @@ plugin_manager { action: "remove_bundle", target: "@local/gpt-apply-patch" }
 ## Verify
 
 ```bash
-node --test test/
+node --test test/*.test.js
 ```
 
 The seven tests exercise model detection, the capture proxy (including the
