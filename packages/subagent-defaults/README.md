@@ -47,7 +47,9 @@ a restart.
 
 ## Requirements
 
-- `engines.dsh`: `^0.2.3-alpha.2` (`allowedRoutes()` on the settings service).
+- `engines.dsh`: `^0.2.2-0`. The plugin reads `allowedRoutes()` on DSH 0.2.3+
+  and falls back to the older `current()` / `{ enabled, allowedModels }` shape on
+  0.2.2 and earlier.
 - Services: `agents`; reads `subagentModelSelection` when present.
 
 ## Tests
@@ -56,5 +58,6 @@ a restart.
 node --test test/*.test.js
 ```
 
-The eight tests cover the inheritance checks, seeded and non-subagent sessions,
-disabled and absent settings, a throwing setting, and an unknown parent route.
+The eleven tests cover the inheritance checks, seeded and non-subagent sessions,
+both settings-service APIs, disabled and absent settings, a throwing read, and
+an unknown parent route.

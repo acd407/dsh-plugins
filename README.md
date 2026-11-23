@@ -7,12 +7,14 @@ Host row.
 
 | Package | Version | What it does |
 |---|---|---|
-| [`subagent-defaults`](packages/subagent-defaults) | 0.2.1 | Routes delegated subagents onto the models the **Subagent** settings page authorizes, instead of inheriting the parent's route. |
-| [`gpt-apply-patch`](packages/gpt-apply-patch) | 1.0.0 | Reuses DSH's built-in Codex-style `apply_patch` tool, offered only to `gpt-*` models. |
-| [`llm-capacity-retry`](packages/llm-capacity-retry) | 1.0.0 | Rewrites a transient upstream capacity refusal (`PI_AI_ERROR` + "capacity limit … try again in 2s") to `RATE_LIMIT`, so the route's own retry policy resends the step. |
+| [`subagent-defaults`](packages/subagent-defaults) | 0.2.2 | Routes delegated subagents onto the models the **Subagent** settings page authorizes, instead of inheriting the parent's route. |
+| [`gpt-apply-patch`](packages/gpt-apply-patch) | 1.0.1 | Reuses DSH's built-in Codex-style `apply_patch` tool, offered only to `gpt-*` models. |
+| [`llm-capacity-retry`](packages/llm-capacity-retry) | 1.0.1 | Rewrites a transient upstream capacity refusal (`PI_AI_ERROR` + "capacity limit … try again in 2s") to `RATE_LIMIT`, so the route's own retry policy resends the step. |
 
-Everything targets DSH `^0.2.3-alpha.2`, declared in each package's
-`engines.dsh`.
+Every package declares `engines.dsh: "^0.2.2-0"`: it loads on the 0.2.2 line
+(stable or prerelease, including the current `latest` 0.2.2-rc.5) and on later
+0.2.x prereleases such as 0.2.3-alpha.2, but not on 0.2.1 or 0.3. The 0.2.2 and
+0.2.3 settings-service APIs differ, so `subagent-defaults` reads both.
 
 ## Install
 
@@ -26,9 +28,9 @@ Tags are named `<package>-v<version>` and mark the version each package's
 `package.json` declares:
 
 ```text
-github:acd407/dsh-plugins#subagent-defaults-v0.2.1&path:/packages/subagent-defaults
-github:acd407/dsh-plugins#gpt-apply-patch-v1.0.0&path:/packages/gpt-apply-patch
-github:acd407/dsh-plugins#llm-capacity-retry-v1.0.0&path:/packages/llm-capacity-retry
+github:acd407/dsh-plugins#subagent-defaults-v0.2.2&path:/packages/subagent-defaults
+github:acd407/dsh-plugins#gpt-apply-patch-v1.0.1&path:/packages/gpt-apply-patch
+github:acd407/dsh-plugins#llm-capacity-retry-v1.0.1&path:/packages/llm-capacity-retry
 ```
 
 A tag spec installs and pins reproducible code through the profile's lockfile,
@@ -76,9 +78,9 @@ again in Plugins) or after a `dsh web` restart.
 
 | Tag | Package | Version |
 |---|---|---|
-| `subagent-defaults-v0.2.1` | `packages/subagent-defaults` | 0.2.1 |
-| `gpt-apply-patch-v1.0.0` | `packages/gpt-apply-patch` | 1.0.0 |
-| `llm-capacity-retry-v1.0.0` | `packages/llm-capacity-retry` | 1.0.0 |
+| `subagent-defaults-v0.2.2` | `packages/subagent-defaults` | 0.2.2 |
+| `gpt-apply-patch-v1.0.1` | `packages/gpt-apply-patch` | 1.0.1 |
+| `llm-capacity-retry-v1.0.1` | `packages/llm-capacity-retry` | 1.0.1 |
 
 Tags mark released states; there are no Release assets. Bump a package's
 `package.json` version and tag the same commit as `<package>-v<version>`.

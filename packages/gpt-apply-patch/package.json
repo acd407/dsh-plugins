@@ -1,12 +1,12 @@
 {
   "name": "@local/gpt-apply-patch",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Reuses DSH's built-in Codex-style apply_patch tool and offers it only to gpt-* models.",
   "license": "MIT",
   "type": "module",
   "engines": {
-    "dsh": "^0.2.3-alpha.2"
+    "dsh": "^0.2.2-0"
   },
   "repository": {
     "type": "git",
