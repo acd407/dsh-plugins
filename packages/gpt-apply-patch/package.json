@@ -1,0 +1,33 @@
+{
+  "name": "@local/gpt-apply-patch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reuses DSH's built-in Codex-style apply_patch tool and offers it only to gpt-* models.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "dsh": "^0.2.3-alpha.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/acd407/dsh-plugins.git",
+    "directory": "packages/gpt-apply-patch"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

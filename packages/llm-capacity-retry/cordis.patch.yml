@@ -1,0 +1,13 @@
+# Inserts this Host-only row. No configuration is required: the listener wraps
+# every `llm/stream` call and rewrites only transient capacity refusals.
+# Optional overrides (see README.md):
+#
+#   config:
+#     providers: [packycode]   # default: every provider
+#     codes: [PI_AI_ERROR]     # default: PI_AI_ERROR
+#     code: RATE_LIMIT         # default: RATE_LIMIT
+#     honorRetryHint: true     # default: true
+#     maxHintMs: 10000         # default: 10000
+- insert:
+    - id: llm-capacity-retry
+      name: '@local/llm-capacity-retry'

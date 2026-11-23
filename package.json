@@ -1,0 +1,18 @@
+{
+  "name": "dsh-plugins",
+  "version": "0.0.0",
+  "private": true,
+  "description": "DeepSeek Harness plugins: subagent model defaults, a gpt-only apply_patch, and retryable upstream capacity refusals.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "node --test packages/subagent-defaults/test/ packages/gpt-apply-patch/test/ packages/llm-capacity-retry/test/",
+    "test:integration": "node packages/llm-capacity-retry/scripts/integration.mjs"
+  }
+}

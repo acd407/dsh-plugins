@@ -1,0 +1,5 @@
+# Inserts the Host row that re-exports the built-in apply_patch definition
+# behind a per-step `gpt-*` model gate. No configuration is required.
+- insert:
+    - id: gpt-apply-patch
+      name: '@local/gpt-apply-patch'

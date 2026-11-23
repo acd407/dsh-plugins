@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Capacity retry",
+    "description": "Rewrites a transient upstream capacity refusal from PI_AI_ERROR to RATE_LIMIT, so the route's retry policy resends the step instead of ending the turn. The upstream's own sentence still reaches you, no key is disabled or rotated, and no other failure is reclassified; when the message names a pause such as \"try again in 2s\", the retry waits that long. Applies to every provider by default; disable the row or set providers in its config to narrow it. Each retry is another billed model request, bounded by the route's policy (PackyCode: 20)."
+  }
+}

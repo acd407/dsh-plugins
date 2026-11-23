@@ -1,0 +1,8 @@
+# Installed or built locally, never committed
+node_modules/
+dist/
+*.tgz
+
+# Editor and OS noise
+.DS_Store
+*.log

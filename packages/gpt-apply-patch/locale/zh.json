@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "GPT apply_patch",
+    "description": "复用 DSH 内置的 Codex 风格 apply_patch，仅对 gpt-* 模型开放。"
+  }
+}

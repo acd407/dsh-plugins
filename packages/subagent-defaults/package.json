@@ -1,0 +1,32 @@
+{
+  "name": "dsh-subagent-defaults",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "description": "Routes delegated subagents onto the models authorized by the Subagent settings page, instead of inheriting the parent session's model.",
+  "license": "MIT",
+  "engines": {
+    "dsh": "^0.2.3-alpha.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/acd407/dsh-plugins.git",
+    "directory": "packages/subagent-defaults"
+  },
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "name": "subagent-defaults",
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

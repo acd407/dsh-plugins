@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "GPT apply_patch",
+    "description": "Reuses DSH's built-in Codex-style apply_patch and offers it only to gpt-* models."
+  }
+}

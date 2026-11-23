@@ -1,0 +1,10 @@
+# dsh-subagent-defaults — routes delegated subagents onto the models the
+# Subagent settings page authorizes, instead of inheriting the parent route.
+#
+# There is no preset copy and no hardcoded model: the plugin reads the live
+# `subagent-model-selection-settings` values when each child is created, so
+# changing the checkboxes takes effect for new sessions without editing this
+# bundle. Fork (seeded) children are left on the parent route for prefix reuse.
+- insert:
+    - id: subagent-defaults
+      name: 'dsh-subagent-defaults'

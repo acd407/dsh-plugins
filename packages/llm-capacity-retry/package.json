@@ -1,0 +1,34 @@
+{
+  "name": "@local/llm-capacity-retry",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Treats transient upstream capacity refusals as retryable RATE_LIMIT failures, so the route's own retry policy resends the step instead of ending the turn.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "dsh": "^0.2.3-alpha.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/acd407/dsh-plugins.git",
+    "directory": "packages/llm-capacity-retry"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
