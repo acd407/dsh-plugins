@@ -16,9 +16,30 @@ Everything targets DSH `^0.2.3-alpha.2`, declared in each package's
 
 ## Install
 
-DSH installs bundles from a registry package, a local directory, or a **Git
-address**; no npm release is needed. From the GUI (**Plugins → Add plugin**) or
-`plugin_manager` `install_bundle`, pass a spec pinned to a commit:
+DSH installs bundles from a registry package, a local directory, a Git address or
+a tarball; no npm release is needed. From the GUI (**Plugins → Add plugin**) or
+`plugin_manager` `install_bundle`, pass one of the specs below.
+
+### By tag (readable)
+
+Tags are named `<package>-v<version>` and mark the version each package's
+`package.json` declares:
+
+```text
+github:acd407/dsh-plugins#subagent-defaults-v0.2.1&path:/packages/subagent-defaults
+github:acd407/dsh-plugins#gpt-apply-patch-v1.0.0&path:/packages/gpt-apply-patch
+github:acd407/dsh-plugins#llm-capacity-retry-v1.0.0&path:/packages/llm-capacity-retry
+```
+
+A tag spec installs and pins reproducible code through the profile's lockfile,
+but DSH offers no **Update** action for it: `listBundles` only marks a Git bundle
+updatable when its saved spec names a full 40-character commit. Upgrading a
+tag-installed package means installing the next tag's spec over it.
+
+### By commit (updatable)
+
+Pass a full commit instead of the tag; that spec is what DSH's Update button can
+replace later:
 
 ```text
 github:acd407/dsh-plugins#<40-char-commit>&path:/packages/subagent-defaults
@@ -32,14 +53,15 @@ Read the current commit with:
 git ls-remote https://github.com/acd407/dsh-plugins HEAD
 ```
 
-Pin the **full 40-character** commit, not a branch or tag: DSH records the spec in
-the profile, and only a full-commit spec is updatable (`updateBundle` refuses a
-branch/tag spec because a failed update could not bring the old version back).
-Updating means replacing the spec with a newer commit — there is no version list
-for Git bundles.
+Pin the **full 40-character** commit, not a branch: only a full-commit spec is
+updatable (`updateBundle` refuses a branch or tag spec because a failed update
+could not bring the old version back). Updating means replacing the spec with a
+newer commit — there is no version list for Git bundles.
 
-From a local clone, install a package directory instead. That records a `link:`
-dependency, which is what this repository is developed against:
+### From a local clone
+
+Install a package directory instead. That records a `link:` dependency, which is
+what this repository is developed against:
 
 ```sh
 git clone git@github.com:acd407/dsh-plugins.git
@@ -49,6 +71,17 @@ git clone git@github.com:acd407/dsh-plugins.git
 
 A changed link install applies at the next profile recomposition (enable the row
 again in Plugins) or after a `dsh web` restart.
+
+## Tags
+
+| Tag | Package | Version |
+|---|---|---|
+| `subagent-defaults-v0.2.1` | `packages/subagent-defaults` | 0.2.1 |
+| `gpt-apply-patch-v1.0.0` | `packages/gpt-apply-patch` | 1.0.0 |
+| `llm-capacity-retry-v1.0.0` | `packages/llm-capacity-retry` | 1.0.0 |
+
+Tags mark released states; there are no Release assets. Bump a package's
+`package.json` version and tag the same commit as `<package>-v<version>`.
 
 ## Layout
 
