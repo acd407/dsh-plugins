@@ -5,6 +5,7 @@ import {
   DEFAULTS,
   apply,
   isCapacityFailure,
+  isFallbackCandidate,
   name,
   normalizeConfig,
   reclassify,
@@ -13,6 +14,8 @@ import {
 } from '../index.js'
 
 const CODEX_CAPACITY = 'Temporary capacity limit. Please try again in 2s.'
+const GATEWAY_CONCURRENCY =
+  'gateway_concurrency_limit: Concurrency limit exceeded for account, please retry later'
 const SERVER_ERROR =
   'An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists.'
 
@@ -62,6 +65,13 @@ test('accepts overload wording only with a concrete pause', () => {
   assert.equal(isCapacityFailure('service unavailable'), false)
 })
 
+test('recognises a gateway concurrency limit', () => {
+  assert.equal(isCapacityFailure(GATEWAY_CONCURRENCY), true)
+  assert.equal(isCapacityFailure('Concurrency limit exceeded, please retry later'), true)
+  assert.equal(isCapacityFailure('too many concurrent requests'), true)
+  assert.equal(isCapacityFailure('队列已满，请稍后重试'), false)
+})
+
 test('never reclassifies quota, key or policy wording', () => {
   assert.equal(isCapacityFailure('insufficient quota, capacity limit reached'), false)
   assert.equal(isCapacityFailure('余额不足，请充值'), false)
@@ -101,6 +111,48 @@ test('rewrites only the failure code and keeps the upstream sentence', () => {
   assert.equal(chunk.reason.failure.code, 'PI_AI_ERROR')
 })
 
+test('rewrites the gateway concurrency limit without a named pause', () => {
+  const rewritten = rewriteChunk(failureChunk(GATEWAY_CONCURRENCY), normalizeConfig({}))
+  assert.equal(rewritten.reason.failure.code, 'RATE_LIMIT')
+  assert.equal(rewritten.reason.failure.message, GATEWAY_CONCURRENCY)
+  assert.equal('providerRetryAfterMs' in rewritten.reason.failure, false)
+})
+
+test('fallback mode also rewrites an unrecognised PI_AI_ERROR', () => {
+  const chunk = failureChunk('some brand new gateway sentence, code zz_top_level_thing')
+  assert.equal(rewriteChunk(chunk, normalizeConfig({})), undefined)
+  const rewritten = rewriteChunk(chunk, normalizeConfig({ fallback: true }))
+  assert.equal(rewritten.reason.failure.code, 'RATE_LIMIT')
+  assert.equal(rewritten.reason.failure.message, 'some brand new gateway sentence, code zz_top_level_thing')
+})
+
+test('fallback mode keeps provably permanent failures terminal', () => {
+  const config = normalizeConfig({ fallback: true })
+  const permanent = [
+    'insufficient quota for this account',
+    'HTTP 401 invalid api key',
+    'This API endpoint is only accessible via the official Claude CLI',
+    '分组 image-sale 下模型 MiniMax-H3-Image 无可用渠道（distributor）',
+    '当前令牌未覆盖供应商',
+    'context window exceeded: 1050000 tokens',
+    'unsupported content: image input is not supported by this model',
+    'model_not_found: unknown model zz-9',
+    'HTTP 400 invalid_request_error: messages.1: role must be user or assistant',
+    '升级您的套餐以继续使用',
+  ]
+  for (const message of permanent) {
+    assert.equal(isFallbackCandidate(message), false, message)
+    assert.equal(rewriteChunk(failureChunk(message), config), undefined, message)
+  }
+})
+
+test('fallback mode still uses a pause the message names', () => {
+  const config = normalizeConfig({ fallback: true })
+  const rewritten = rewriteChunk(failureChunk('upstream blip, try again in 3s'), config)
+  assert.equal(rewritten.reason.failure.code, 'RATE_LIMIT')
+  assert.equal(rewritten.reason.failure.providerRetryAfterMs, 3000)
+})
+
 test('omits the pause when the message names none', () => {
   const rewritten = rewriteChunk(failureChunk('Temporary capacity limit.'), normalizeConfig({}))
   assert.equal(rewritten.reason.failure.code, 'RATE_LIMIT')
@@ -131,22 +183,32 @@ test('fills defaults for a missing or malformed config', () => {
     assert.equal(settings.code, 'RATE_LIMIT')
     assert.equal(settings.honorRetryHint, true)
     assert.equal(settings.maxHintMs, 10000)
+    assert.equal(settings.fallback, false)
   }
 })
 
 test('rejects invalid fields with a warning instead of failing the plugin', () => {
   const warnings = []
   const settings = normalizeConfig(
-    { enabled: 'yes', providers: ['packycode', 7], codes: [], code: '', honorRetryHint: 'no', maxHintMs: -1 },
+    {
+      enabled: 'yes',
+      providers: ['packycode', 7],
+      codes: [],
+      code: '',
+      honorRetryHint: 'no',
+      maxHintMs: -1,
+      fallback: 'yes',
+    },
     (warning) => warnings.push(warning),
   )
-  assert.equal(warnings.length, 6)
+  assert.equal(warnings.length, 7)
   assert.equal(settings.enabled, true)
   assert.deepEqual(settings.providers, [])
   assert.deepEqual(settings.codes, ['PI_AI_ERROR'])
   assert.equal(settings.code, 'RATE_LIMIT')
   assert.equal(settings.honorRetryHint, true)
   assert.equal(settings.maxHintMs, 10000)
+  assert.equal(settings.fallback, false)
 })
 
 test('keeps its own copy of every default array', () => {

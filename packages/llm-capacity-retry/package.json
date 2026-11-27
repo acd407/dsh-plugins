@@ -1,6 +1,6 @@
 {
   "name": "@local/llm-capacity-retry",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Treats transient upstream capacity refusals as retryable RATE_LIMIT failures, so the route's own retry policy resends the step instead of ending the turn.",
   "license": "MIT",

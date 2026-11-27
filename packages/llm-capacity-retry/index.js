@@ -42,6 +42,11 @@ export const DEFAULTS = Object.freeze({
   honorRetryHint: true,
   /** Upper bound for a parsed pause; above a policy's maxDelayMs it would stop normal-mode retries. */
   maxHintMs: 10000,
+  /**
+   * Treat any `PI_AI_ERROR` that is not recognisably permanent as retryable,
+   * not just capacity wording. See {@link isFallbackCandidate}.
+   */
+  fallback: false,
 })
 
 /**
@@ -56,12 +61,34 @@ const KEY_OR_QUOTA =
 const CAPACITY =
   /temporar(?:y|ily)\b[^.]{0,60}capacity|capacity\b[^.]{0,60}(?:limit|exceeded|reached|constraint)|at capacity|over capacity|no (?:free |available )?capacity|capacity is (?:full|exhausted)/i
 
+/**
+ * Saturation of a *shared pool* rather than of one model: the gateway's own
+ * concurrency cap for the account (`gateway_concurrency_limit`), a full queue,
+ * or too many concurrent requests. These clear on their own within seconds and
+ * are what the gateway itself tells the caller to resend ("please retry later"),
+ * so no separate pause hint is required.
+ */
+const CONCURRENCY =
+  /\bgateway[_-]?concurrency[_-]?limit\b|\bconcurrency[\s_-]+(?:limit|cap|queue)\b[^.]{0,40}?\b(?:exceeded|reached|full|hit)\b|\btoo many concurrent\b|\bconcurrent[\s_-]+(?:requests?|calls?|sessions?)\b[^.]{0,30}?\b(?:exceeded|limit|reached)\b|并发(?:数|请求)?[^。]{0,10}(?:超|满|限制)/i
+
 /** Generic overload phrasing, accepted only together with a concrete retry pause. */
 const OVERLOAD =
   /overload|too many requests|rate limit|server is busy|service unavailable|try again later|稍后重试|服务繁忙/i
 
 /** The pause a message names: "try again in 2s", "retry in 500 ms". */
 const RETRY_HINT = /\b(?:try|retry)(?:\s+again)?\s+in\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?)\b/i
+
+/**
+ * Wording that makes a failure permanent for this step: a resend cannot change
+ * an auth decision, an exhausted balance, a malformed request, a missing model,
+ * a context overflow or a content refusal. Used only by `fallback` mode, which
+ * otherwise reclassifies any `PI_AI_ERROR`.
+ *
+ * The HTTP status tokens are checked as a whole number so a `15` in a message
+ * body is not read as 4xx/5xx; only leading or standalone status codes count.
+ */
+const PERMANENT =
+  /quota|balance|insufficient|余额|额度|令牌|invalid[\s_-]*(?:api[\s_-]*)?key|unauthori[sz]ed|forbidden|only accessible via the official|官方客户端|\b(?:400|401|403|404|405|409|413|415|422)\b|context[\s_-]*window|too long|maximum context|content[\s_-]*(?:policy|filter)|refus|unsupported|not[\s_-]*supported|unknown[\s_-]*model|model[\s_-]*not[\s_-]*found|无可用渠道|未覆盖供应商|套餐|订阅|\bplans?\b|\bsubscription\b/i
 
 /**
  * Whether one failure message is an upstream capacity refusal a resend clears.
@@ -73,7 +100,27 @@ export function isCapacityFailure(message) {
   if (typeof message !== 'string' || message.length === 0) return false
   if (KEY_OR_QUOTA.test(message)) return false
   if (CAPACITY.test(message)) return true
+  if (CONCURRENCY.test(message)) return true
   return OVERLOAD.test(message) && RETRY_HINT.test(message)
+}
+
+/**
+ * Whether one unclassified failure may be treated as retryable anyway.
+ *
+ * `fallback` mode answers the case this plugin cannot enumerate: a gateway
+ * invents a code of its own (`gateway_concurrency_limit`), the adapter has no
+ * pattern for the sentence, and the harness files it as `PI_AI_ERROR` — a code
+ * no retry policy runs. Rather than chase every new wording, everything that is
+ * not recognisably permanent is treated as transient. The cost is that a
+ * genuinely broken request the denylist misses is resent until the route's
+ * budget runs out, so the route's `maxRetries` bounds it.
+ *
+ * @param message - provider failure text, as the adapter carried it.
+ * @returns true when the failure is not provably permanent.
+ */
+export function isFallbackCandidate(message) {
+  if (typeof message !== 'string' || message.length === 0) return false
+  return !PERMANENT.test(message)
 }
 
 /**
@@ -112,7 +159,8 @@ export function rewriteChunk(chunk, config) {
   const failure = chunk.reason.failure
   if (failure === null || typeof failure !== 'object') return undefined
   if (!config.codes.includes(failure.code)) return undefined
-  if (!isCapacityFailure(failure.message)) return undefined
+  const transient = isCapacityFailure(failure.message) || (config.fallback && isFallbackCandidate(failure.message))
+  if (!transient) return undefined
   const hint = config.honorRetryHint ? retryHintMs(failure.message, config.maxHintMs) : undefined
   return {
     ...chunk,
@@ -179,7 +227,8 @@ export function normalizeConfig(raw, warn = () => {}) {
     (value) => Number.isFinite(value) && value > 0,
     DEFAULTS.maxHintMs,
   )
-  return { enabled, providers: [...providers], codes: [...codes], code, honorRetryHint, maxHintMs }
+  const fallback = take('fallback', (value) => typeof value === 'boolean', DEFAULTS.fallback)
+  return { enabled, providers: [...providers], codes: [...codes], code, honorRetryHint, maxHintMs, fallback }
 }
 
 /** Describe one config field for a rejected-value warning. */
@@ -187,6 +236,7 @@ function describe(field) {
   switch (field) {
     case 'enabled':
     case 'honorRetryHint':
+    case 'fallback':
       return 'a boolean'
     case 'providers':
     case 'codes':
