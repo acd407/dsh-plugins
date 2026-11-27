@@ -1,25 +1,32 @@
 /**
- * @local/llm-capacity-retry — keep transient upstream capacity refusals
+ * @local/llm-capacity-retry — make the harness's unclassified model failures
  * retryable.
  *
- * PackyCode's Codex channel reports a saturated upstream inside the stream it
- * has already answered 200 for: an SSE `error` event carrying
- * `rate_limit_exceeded` / "Temporary capacity limit. Please try again in 2s."
- * before any output. The OpenAI SDK raises that without an HTTP status, so
- * DSH's pi-ai adapter (`classifyPiAiError`) cannot recognise it and files it as
- * `PI_AI_ERROR` — a code no retry policy re-runs. The turn ends instead of
- * resending a request the official Codex client would resend.
+ * DSH's pi-ai adapter (`classifyPiAiError`) gives every failure it recognises a
+ * specific code: `AUTH`, `QUOTA`, `RATE_LIMIT`, `INVALID_REQUEST`, `SERVER`,
+ * `TIMEOUT`, `TRANSPORT`, `CONTEXT_WINDOW_EXCEEDED`. What is left — a gateway
+ * error nobody has a pattern for — becomes `PI_AI_ERROR`, and **no route lists
+ * `PI_AI_ERROR` among its retryable codes**, so the step dies on its first
+ * attempt even though the code means "unknown", not "permanent".
  *
- * This plugin wraps `llm/stream` (the documented waterfall around every
- * streaming model call) and rewrites only the failure `code` of such a
- * refusal to `RATE_LIMIT`, which the route's own policy already retries
- * (PackyCode: 20 attempts, 500 ms base backoff, 10 s cap). The upstream
- * sentence is preserved for the user, no key is blamed, and nothing is
- * reclassified unless the message is explicitly transient.
+ * Examples seen in practice: PackyCode answering
+ * `gateway_concurrency_limit: Concurrency limit exceeded for account, please
+ * retry later` inside an already-200 stream (the adapter looks for "rate limit",
+ * not "concurrency limit"), and pi-ai's own `pending` / `deferred` terminal
+ * states.
  *
- * It is provider-agnostic on purpose: any adapter that leaves a capacity
- * refusal unclassified benefits, and the wording gate keeps permanent errors
- * terminal.
+ * So this plugin treats `PI_AI_ERROR` as retryable by default: one listener on
+ * `llm/stream` rewrites the failure `code` to `RATE_LIMIT`, which every route's
+ * policy already retries (PackyCode: 20 attempts, 500 ms base backoff, 10 s cap),
+ * and the serial retry executor resends the step. The message, status, request
+ * id and replay state are untouched, so the user still reads the upstream's own
+ * words when the budget runs out.
+ *
+ * `guard: true` (default) keeps the handful of gateway refusals that can never
+ * succeed on a resend terminal: an official-client-only channel, a key whose
+ * groups do not cover the model, and a test-message refusal. Those are the cases
+ * PackyCode deliberately reports as `PI_AI_ERROR` precisely so that nothing
+ * retries them. Set `guard: false` to reclassify those too.
  */
 
 /** Cordis plugin id used by loader diagnostics. */
@@ -34,93 +41,47 @@ export const DEFAULTS = Object.freeze({
   enabled: true,
   /** Provider ids to inspect; empty means every provider. */
   providers: Object.freeze([]),
-  /** Failure codes eligible for reclassification. */
+  /** Failure codes treated as "unknown, therefore worth resending". */
   codes: Object.freeze(['PI_AI_ERROR']),
-  /** Code written when a transient capacity refusal is recognised. */
+  /** Code written so the route's retry policy picks the failure up. */
   code: 'RATE_LIMIT',
   /** Use the pause the message names as the retry delay. */
   honorRetryHint: true,
   /** Upper bound for a parsed pause; above a policy's maxDelayMs it would stop normal-mode retries. */
   maxHintMs: 10000,
-  /**
-   * Treat any `PI_AI_ERROR` that is not recognisably permanent as retryable,
-   * not just capacity wording. See {@link isFallbackCandidate}.
-   */
-  fallback: false,
+  /** Keep refusals that a resend can never clear terminal; see {@link isMandatoryTerminal}. */
+  guard: true,
 })
 
 /**
- * Wording that means "the key or its balance is the problem". These never
- * get reclassified: quota and auth failures must stay terminal for the step so
- * key rotation and the user-facing message keep working.
+ * Refusals a resend cannot change. Each one is a decision about *this* request,
+ * *this* key or *this* channel, not a transient fault:
+ *
+ * - a group that serves only the vendor's official client
+ *   (`only accessible via the official Claude CLI`, `请使用标准 Codex 客户端`);
+ * - a key whose groups do not cover the model (`当前令牌未覆盖供应商`,
+ *   `无可用渠道`), which PackyCode reports as `model_not_found`;
+ * - a connectivity-probe refusal, which PackyCode files under its own code but
+ *   which arrives here as text when that code is unavailable;
+ * - a rejected or missing credential.
+ *
+ * Retrying these costs the full budget (about three minutes on a 20-attempt
+ * policy) and always ends in the same sentence.
  */
-const KEY_OR_QUOTA =
-  /quota|balance|insufficient|余额|额度|令牌|\b40[13]\b|invalid[\s_-]*key|unauthori[sz]ed|forbidden|only accessible via the official|官方客户端/i
-
-/** Explicit capacity phrasing, including the Codex channel's own sentence. */
-const CAPACITY =
-  /temporar(?:y|ily)\b[^.]{0,60}capacity|capacity\b[^.]{0,60}(?:limit|exceeded|reached|constraint)|at capacity|over capacity|no (?:free |available )?capacity|capacity is (?:full|exhausted)/i
-
-/**
- * Saturation of a *shared pool* rather than of one model: the gateway's own
- * concurrency cap for the account (`gateway_concurrency_limit`), a full queue,
- * or too many concurrent requests. These clear on their own within seconds and
- * are what the gateway itself tells the caller to resend ("please retry later"),
- * so no separate pause hint is required.
- */
-const CONCURRENCY =
-  /\bgateway[_-]?concurrency[_-]?limit\b|\bconcurrency[\s_-]+(?:limit|cap|queue)\b[^.]{0,40}?\b(?:exceeded|reached|full|hit)\b|\btoo many concurrent\b|\bconcurrent[\s_-]+(?:requests?|calls?|sessions?)\b[^.]{0,30}?\b(?:exceeded|limit|reached)\b|并发(?:数|请求)?[^。]{0,10}(?:超|满|限制)/i
-
-/** Generic overload phrasing, accepted only together with a concrete retry pause. */
-const OVERLOAD =
-  /overload|too many requests|rate limit|server is busy|service unavailable|try again later|稍后重试|服务繁忙/i
+const MANDATORY_TERMINAL =
+  /only accessible via the official|only accepts requests from the official|official\s+claude(?:\s*code)?\s*cli|官方\s*claude(?:\s*code)?\s*cli|请使用标准\s*codex\s*客户端|客户端存在异常|二次分发|API\s*转接|already connected and authorized|no need to send test messages|无可用渠道|未覆盖供应商|model[\s_-]*not[\s_-]*found|无效的令牌|令牌无效|invalid[\s_-]*(?:api[\s_-]*)?key|unauthori[sz]ed/i
 
 /** The pause a message names: "try again in 2s", "retry in 500 ms". */
 const RETRY_HINT = /\b(?:try|retry)(?:\s+again)?\s+in\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?)\b/i
 
 /**
- * Wording that makes a failure permanent for this step: a resend cannot change
- * an auth decision, an exhausted balance, a malformed request, a missing model,
- * a context overflow or a content refusal. Used only by `fallback` mode, which
- * otherwise reclassifies any `PI_AI_ERROR`.
- *
- * The HTTP status tokens are checked as a whole number so a `15` in a message
- * body is not read as 4xx/5xx; only leading or standalone status codes count.
- */
-const PERMANENT =
-  /quota|balance|insufficient|余额|额度|令牌|invalid[\s_-]*(?:api[\s_-]*)?key|unauthori[sz]ed|forbidden|only accessible via the official|官方客户端|\b(?:400|401|403|404|405|409|413|415|422)\b|context[\s_-]*window|too long|maximum context|content[\s_-]*(?:policy|filter)|refus|unsupported|not[\s_-]*supported|unknown[\s_-]*model|model[\s_-]*not[\s_-]*found|无可用渠道|未覆盖供应商|套餐|订阅|\bplans?\b|\bsubscription\b/i
-
-/**
- * Whether one failure message is an upstream capacity refusal a resend clears.
+ * Whether one refusal is one a resend can never clear.
  *
  * @param message - provider failure text, as the adapter carried it.
- * @returns true only when the text is transient capacity wording.
+ * @returns true for the known permanent gateway and credential refusals.
  */
-export function isCapacityFailure(message) {
-  if (typeof message !== 'string' || message.length === 0) return false
-  if (KEY_OR_QUOTA.test(message)) return false
-  if (CAPACITY.test(message)) return true
-  if (CONCURRENCY.test(message)) return true
-  return OVERLOAD.test(message) && RETRY_HINT.test(message)
-}
-
-/**
- * Whether one unclassified failure may be treated as retryable anyway.
- *
- * `fallback` mode answers the case this plugin cannot enumerate: a gateway
- * invents a code of its own (`gateway_concurrency_limit`), the adapter has no
- * pattern for the sentence, and the harness files it as `PI_AI_ERROR` — a code
- * no retry policy runs. Rather than chase every new wording, everything that is
- * not recognisably permanent is treated as transient. The cost is that a
- * genuinely broken request the denylist misses is resent until the route's
- * budget runs out, so the route's `maxRetries` bounds it.
- *
- * @param message - provider failure text, as the adapter carried it.
- * @returns true when the failure is not provably permanent.
- */
-export function isFallbackCandidate(message) {
-  if (typeof message !== 'string' || message.length === 0) return false
-  return !PERMANENT.test(message)
+export function isMandatoryTerminal(message) {
+  return typeof message === 'string' && message.length > 0 && MANDATORY_TERMINAL.test(message)
 }
 
 /**
@@ -143,7 +104,21 @@ export function retryHintMs(message, capMs = DEFAULTS.maxHintMs) {
 }
 
 /**
- * Rewrite one stream chunk when it is a terminal capacity refusal.
+ * Whether one failure should be turned into the configured retryable code.
+ *
+ * @param failure - the finish chunk's failure.
+ * @param config - normalised plugin config.
+ * @returns true when the code is listed and no guard blocks it.
+ */
+export function shouldReclassify(failure, config) {
+  if (failure === null || typeof failure !== 'object') return false
+  if (!config.codes.includes(failure.code)) return false
+  if (config.guard && isMandatoryTerminal(failure.message)) return false
+  return true
+}
+
+/**
+ * Rewrite one stream chunk when its failure is an unclassified one.
  *
  * Only the failure `code` and (optionally) `providerRetryAfterMs` change; the
  * message, status, request id, replay envelope and every other chunk pass
@@ -157,10 +132,7 @@ export function rewriteChunk(chunk, config) {
   if (chunk === null || typeof chunk !== 'object') return undefined
   if (chunk.type !== 'finish' || chunk.reason?.kind !== 'error') return undefined
   const failure = chunk.reason.failure
-  if (failure === null || typeof failure !== 'object') return undefined
-  if (!config.codes.includes(failure.code)) return undefined
-  const transient = isCapacityFailure(failure.message) || (config.fallback && isFallbackCandidate(failure.message))
-  if (!transient) return undefined
+  if (!shouldReclassify(failure, config)) return undefined
   const hint = config.honorRetryHint ? retryHintMs(failure.message, config.maxHintMs) : undefined
   return {
     ...chunk,
@@ -176,7 +148,7 @@ export function rewriteChunk(chunk, config) {
 }
 
 /**
- * Wrap a chunk stream, rewriting terminal capacity refusals on the way.
+ * Wrap a chunk stream, rewriting unclassified failures on the way.
  *
  * @param open - thunk returning the downstream stream (awaited, so an inner
  *   asynchronous waterfall listener is supported).
@@ -198,7 +170,9 @@ export async function* reclassify(open, config) {
  * @returns the normalised config.
  */
 export function normalizeConfig(raw, warn = () => {}) {
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return { ...DEFAULTS, providers: [], codes: [...DEFAULTS.codes] }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ...DEFAULTS, providers: [], codes: [...DEFAULTS.codes] }
+  }
   const source = raw
   const take = (field, accept, fallback) => {
     if (source[field] === undefined) return fallback
@@ -227,8 +201,8 @@ export function normalizeConfig(raw, warn = () => {}) {
     (value) => Number.isFinite(value) && value > 0,
     DEFAULTS.maxHintMs,
   )
-  const fallback = take('fallback', (value) => typeof value === 'boolean', DEFAULTS.fallback)
-  return { enabled, providers: [...providers], codes: [...codes], code, honorRetryHint, maxHintMs, fallback }
+  const guard = take('guard', (value) => typeof value === 'boolean', DEFAULTS.guard)
+  return { enabled, providers: [...providers], codes: [...codes], code, honorRetryHint, maxHintMs, guard }
 }
 
 /** Describe one config field for a rejected-value warning. */
@@ -236,7 +210,7 @@ function describe(field) {
   switch (field) {
     case 'enabled':
     case 'honorRetryHint':
-    case 'fallback':
+    case 'guard':
       return 'a boolean'
     case 'providers':
     case 'codes':

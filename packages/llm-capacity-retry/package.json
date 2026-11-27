@@ -1,8 +1,8 @@
 {
   "name": "@local/llm-capacity-retry",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
-  "description": "Treats transient upstream capacity refusals as retryable RATE_LIMIT failures, so the route's own retry policy resends the step instead of ending the turn.",
+  "description": "Treats DSH's unclassified model failure (PI_AI_ERROR) as retryable RATE_LIMIT, so the route's retry policy resends the step instead of ending the turn.",
   "license": "MIT",
   "type": "module",
   "engines": {

@@ -4,20 +4,19 @@ import { test } from 'node:test'
 import {
   DEFAULTS,
   apply,
-  isCapacityFailure,
-  isFallbackCandidate,
+  isMandatoryTerminal,
   name,
   normalizeConfig,
   reclassify,
   retryHintMs,
   rewriteChunk,
+  shouldReclassify,
 } from '../index.js'
 
-const CODEX_CAPACITY = 'Temporary capacity limit. Please try again in 2s.'
 const GATEWAY_CONCURRENCY =
   'gateway_concurrency_limit: Concurrency limit exceeded for account, please retry later'
-const SERVER_ERROR =
-  'An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists.'
+const CODEX_CAPACITY = 'Temporary capacity limit. Please try again in 2s.'
+const UNKNOWN = 'some brand new gateway sentence with no status word at all'
 
 /** Build one terminal error finish chunk. */
 function failureChunk(message, code = 'PI_AI_ERROR', extra = {}) {
@@ -53,36 +52,55 @@ function fakeCtx() {
   return { ctx, registrations, warnings }
 }
 
-test('recognises the Codex capacity sentence', () => {
-  assert.equal(isCapacityFailure(CODEX_CAPACITY), true)
-  assert.equal(isCapacityFailure('Upstream is at capacity, please retry'), true)
-  assert.equal(isCapacityFailure('capacity limit reached for this channel'), true)
+test('PI_AI_ERROR is retryable whatever the wording', () => {
+  const config = normalizeConfig({})
+  for (const message of [GATEWAY_CONCURRENCY, CODEX_CAPACITY, UNKNOWN, 'pending', 'deferred']) {
+    const rewritten = rewriteChunk(failureChunk(message), config)
+    assert.equal(rewritten?.reason.failure.code, 'RATE_LIMIT', message)
+    assert.equal(rewritten.reason.failure.message, message)
+  }
 })
 
-test('accepts overload wording only with a concrete pause', () => {
-  assert.equal(isCapacityFailure('Server is busy, try again in 1s.'), true)
-  assert.equal(isCapacityFailure('Server is busy.'), false)
-  assert.equal(isCapacityFailure('service unavailable'), false)
+test('leaves a code no policy retries alone', () => {
+  const config = normalizeConfig({})
+  for (const code of ['AUTH', 'QUOTA', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'INVALID_REQUEST', 'CONTEXT_WINDOW_EXCEEDED']) {
+    assert.equal(rewriteChunk(failureChunk('anything', code), config), undefined, code)
+  }
 })
 
-test('recognises a gateway concurrency limit', () => {
-  assert.equal(isCapacityFailure(GATEWAY_CONCURRENCY), true)
-  assert.equal(isCapacityFailure('Concurrency limit exceeded, please retry later'), true)
-  assert.equal(isCapacityFailure('too many concurrent requests'), true)
-  assert.equal(isCapacityFailure('队列已满，请稍后重试'), false)
+test('keeps the gateway refusals a resend cannot clear terminal', () => {
+  const config = normalizeConfig({})
+  const permanent = [
+    'This API endpoint is only accessible via the official Claude CLI',
+    '请使用标准 Codex 客户端',
+    '分组 image-sale 下模型 MiniMax-H3-Image 无可用渠道（distributor）',
+    '当前令牌未覆盖供应商',
+    'model_not_found: unknown model zz-9',
+    '无效的令牌',
+    '客户端存在异常，疑似二次分发',
+  ]
+  for (const message of permanent) {
+    assert.equal(isMandatoryTerminal(message), true, message)
+    assert.equal(shouldReclassify({ message, code: 'PI_AI_ERROR' }, config), false, message)
+    assert.equal(rewriteChunk(failureChunk(message), config), undefined, message)
+  }
 })
 
-test('never reclassifies quota, key or policy wording', () => {
-  assert.equal(isCapacityFailure('insufficient quota, capacity limit reached'), false)
-  assert.equal(isCapacityFailure('余额不足，请充值'), false)
-  assert.equal(isCapacityFailure('HTTP 401 invalid key'), false)
-  assert.equal(isCapacityFailure('This API endpoint is only accessible via the official Claude CLI'), false)
+test('guard: false reclassifies those too', () => {
+  const config = normalizeConfig({ guard: false })
+  const rewritten = rewriteChunk(
+    failureChunk('This API endpoint is only accessible via the official Claude CLI'),
+    config,
+  )
+  assert.equal(rewritten.reason.failure.code, 'RATE_LIMIT')
 })
 
-test('ignores non-transient and empty messages', () => {
-  assert.equal(isCapacityFailure(''), false)
-  assert.equal(isCapacityFailure(undefined), false)
-  assert.equal(isCapacityFailure(SERVER_ERROR), false)
+test('recognises ordinary quota and auth wording as not a policy refusal', () => {
+  // A refusal of this kind arrives with its own code (QUOTA / AUTH), so the
+  // guard does not need to match it; if it ever did, the code filter still
+  // keeps it terminal.
+  const config = normalizeConfig({ codes: ['QUOTA', 'AUTH'] })
+  assert.equal(rewriteChunk(failureChunk('insufficient quota', 'QUOTA'), config).reason.failure.code, 'RATE_LIMIT')
 })
 
 test('reads and caps the pause a message names', () => {
@@ -93,8 +111,8 @@ test('reads and caps the pause a message names', () => {
   assert.equal(retryHintMs('no pause named here'), undefined)
 })
 
-test('rewrites only the failure code and keeps the upstream sentence', () => {
-  const chunk = failureChunk(CODEX_CAPACITY, 'PI_AI_ERROR', {
+test('rewrites only the failure code and keeps everything else', () => {
+  const chunk = failureChunk(GATEWAY_CONCURRENCY, 'PI_AI_ERROR', {
     status: 503,
     requestId: 'req-1',
   })
@@ -102,76 +120,41 @@ test('rewrites only the failure code and keeps the upstream sentence', () => {
   const rewritten = rewriteChunk(chunk, normalizeConfig({}))
   assert.equal(rewritten.reason.kind, 'error')
   assert.equal(rewritten.reason.failure.code, 'RATE_LIMIT')
-  assert.equal(rewritten.reason.failure.message, CODEX_CAPACITY)
+  assert.equal(rewritten.reason.failure.message, GATEWAY_CONCURRENCY)
   assert.equal(rewritten.reason.failure.status, 503)
   assert.equal(rewritten.reason.failure.requestId, 'req-1')
-  assert.equal(rewritten.reason.failure.providerRetryAfterMs, 2000)
   assert.deepEqual(rewritten.replayState, { response: { id: 'r' } })
   // The original chunk is untouched.
   assert.equal(chunk.reason.failure.code, 'PI_AI_ERROR')
 })
 
-test('rewrites the gateway concurrency limit without a named pause', () => {
-  const rewritten = rewriteChunk(failureChunk(GATEWAY_CONCURRENCY), normalizeConfig({}))
-  assert.equal(rewritten.reason.failure.code, 'RATE_LIMIT')
-  assert.equal(rewritten.reason.failure.message, GATEWAY_CONCURRENCY)
-  assert.equal('providerRetryAfterMs' in rewritten.reason.failure, false)
-})
-
-test('fallback mode also rewrites an unrecognised PI_AI_ERROR', () => {
-  const chunk = failureChunk('some brand new gateway sentence, code zz_top_level_thing')
-  assert.equal(rewriteChunk(chunk, normalizeConfig({})), undefined)
-  const rewritten = rewriteChunk(chunk, normalizeConfig({ fallback: true }))
-  assert.equal(rewritten.reason.failure.code, 'RATE_LIMIT')
-  assert.equal(rewritten.reason.failure.message, 'some brand new gateway sentence, code zz_top_level_thing')
-})
-
-test('fallback mode keeps provably permanent failures terminal', () => {
-  const config = normalizeConfig({ fallback: true })
-  const permanent = [
-    'insufficient quota for this account',
-    'HTTP 401 invalid api key',
-    'This API endpoint is only accessible via the official Claude CLI',
-    '分组 image-sale 下模型 MiniMax-H3-Image 无可用渠道（distributor）',
-    '当前令牌未覆盖供应商',
-    'context window exceeded: 1050000 tokens',
-    'unsupported content: image input is not supported by this model',
-    'model_not_found: unknown model zz-9',
-    'HTTP 400 invalid_request_error: messages.1: role must be user or assistant',
-    '升级您的套餐以继续使用',
-  ]
-  for (const message of permanent) {
-    assert.equal(isFallbackCandidate(message), false, message)
-    assert.equal(rewriteChunk(failureChunk(message), config), undefined, message)
-  }
-})
-
-test('fallback mode still uses a pause the message names', () => {
-  const config = normalizeConfig({ fallback: true })
-  const rewritten = rewriteChunk(failureChunk('upstream blip, try again in 3s'), config)
-  assert.equal(rewritten.reason.failure.code, 'RATE_LIMIT')
-  assert.equal(rewritten.reason.failure.providerRetryAfterMs, 3000)
-})
-
-test('omits the pause when the message names none', () => {
-  const rewritten = rewriteChunk(failureChunk('Temporary capacity limit.'), normalizeConfig({}))
-  assert.equal(rewritten.reason.failure.code, 'RATE_LIMIT')
-  assert.equal('providerRetryAfterMs' in rewritten.reason.failure, false)
+test('adds the named pause and omits it when none is named', () => {
+  const withHint = rewriteChunk(failureChunk(CODEX_CAPACITY), normalizeConfig({}))
+  assert.equal(withHint.reason.failure.providerRetryAfterMs, 2000)
+  const withoutHint = rewriteChunk(failureChunk(UNKNOWN), normalizeConfig({}))
+  assert.equal('providerRetryAfterMs' in withoutHint.reason.failure, false)
+  const disabledHint = rewriteChunk(failureChunk(CODEX_CAPACITY), normalizeConfig({ honorRetryHint: false }))
+  assert.equal('providerRetryAfterMs' in disabledHint.reason.failure, false)
 })
 
 test('leaves every chunk it does not own exactly as it was', () => {
   const config = normalizeConfig({})
   assert.equal(rewriteChunk({ type: 'text-delta', index: 0, text: 'x' }, config), undefined)
   assert.equal(rewriteChunk({ type: 'finish', reason: { kind: 'stop' } }, config), undefined)
-  assert.equal(rewriteChunk({ type: 'finish', reason: { kind: 'aborted', failure: { message: CODEX_CAPACITY, code: 'ABORTED' } } }, config), undefined)
-  assert.equal(rewriteChunk(failureChunk(SERVER_ERROR), config), undefined)
-  assert.equal(rewriteChunk(failureChunk(CODEX_CAPACITY, 'QUOTA'), config), undefined)
+  assert.equal(
+    rewriteChunk({ type: 'finish', reason: { kind: 'aborted', failure: { message: UNKNOWN, code: 'ABORTED' } } }, config),
+    undefined,
+  )
+  assert.equal(rewriteChunk({ type: 'finish', reason: { kind: 'error' } }, config), undefined)
 })
 
-test('honours an extended code list', () => {
-  const config = normalizeConfig({ codes: ['UNKNOWN'] })
-  assert.equal(rewriteChunk(failureChunk('capacity limit reached', 'UNKNOWN'), config).reason.failure.code, 'RATE_LIMIT')
-  assert.equal(rewriteChunk(failureChunk('capacity limit reached', 'PI_AI_ERROR'), config), undefined)
+test('honours an extended code list and a custom target code', () => {
+  assert.equal(rewriteChunk(failureChunk(UNKNOWN, 'UNKNOWN'), normalizeConfig({ codes: ['UNKNOWN'] })).reason.failure.code, 'RATE_LIMIT')
+  assert.equal(rewriteChunk(failureChunk(UNKNOWN, 'UNKNOWN'), normalizeConfig({})), undefined)
+  assert.equal(
+    rewriteChunk(failureChunk(UNKNOWN), normalizeConfig({ code: 'SERVER' })).reason.failure.code,
+    'SERVER',
+  )
 })
 
 test('fills defaults for a missing or malformed config', () => {
@@ -183,7 +166,7 @@ test('fills defaults for a missing or malformed config', () => {
     assert.equal(settings.code, 'RATE_LIMIT')
     assert.equal(settings.honorRetryHint, true)
     assert.equal(settings.maxHintMs, 10000)
-    assert.equal(settings.fallback, false)
+    assert.equal(settings.guard, true)
   }
 })
 
@@ -197,7 +180,7 @@ test('rejects invalid fields with a warning instead of failing the plugin', () =
       code: '',
       honorRetryHint: 'no',
       maxHintMs: -1,
-      fallback: 'yes',
+      guard: 'yes',
     },
     (warning) => warnings.push(warning),
   )
@@ -208,7 +191,7 @@ test('rejects invalid fields with a warning instead of failing the plugin', () =
   assert.equal(settings.code, 'RATE_LIMIT')
   assert.equal(settings.honorRetryHint, true)
   assert.equal(settings.maxHintMs, 10000)
-  assert.equal(settings.fallback, false)
+  assert.equal(settings.guard, true)
 })
 
 test('keeps its own copy of every default array', () => {
@@ -244,26 +227,22 @@ async function runListener(config, options, ...chunks) {
   return collect(stream)
 }
 
-test('rewrites a capacity refusal inside the stream and passes the rest through', async () => {
-  const pieces = [
-    { type: 'block-start', index: 0, blockType: 'text' },
-    failureChunk(CODEX_CAPACITY),
-  ]
+test('rewrites an unclassified failure inside the stream and passes the rest through', async () => {
+  const pieces = [{ type: 'block-start', index: 0, blockType: 'text' }, failureChunk(GATEWAY_CONCURRENCY)]
   const out = await runListener({}, { provider: 'packycode', model: 'gpt-6.2-sol' }, ...pieces)
   assert.equal(out.length, 2)
   assert.equal(out[0], pieces[0])
   assert.equal(out[1].reason.failure.code, 'RATE_LIMIT')
-  assert.equal(out[1].reason.failure.providerRetryAfterMs, 2000)
 })
 
 test('stays transparent when scoped to other providers', async () => {
-  const pieces = [failureChunk(CODEX_CAPACITY)]
+  const pieces = [failureChunk(GATEWAY_CONCURRENCY)]
   const out = await runListener({ providers: ['packycode'] }, { provider: 'r4coder' }, ...pieces)
   assert.equal(out[0], pieces[0])
 })
 
 test('wraps the matching provider only', async () => {
-  const pieces = [failureChunk(CODEX_CAPACITY)]
+  const pieces = [failureChunk(GATEWAY_CONCURRENCY)]
   const out = await runListener({ providers: ['packycode'] }, { provider: 'packycode' }, ...pieces)
   assert.equal(out[0].reason.failure.code, 'RATE_LIMIT')
 })
@@ -272,10 +251,7 @@ test('supports an asynchronous next() from another waterfall listener', async ()
   const { ctx, registrations } = fakeCtx()
   apply(ctx, {})
   const listener = registrations[0].listener
-  const stream = listener(
-    { provider: 'packycode' },
-    async () => streamOf(failureChunk(CODEX_CAPACITY)),
-  )
+  const stream = listener({ provider: 'packycode' }, async () => streamOf(failureChunk(GATEWAY_CONCURRENCY)))
   assert.equal(typeof stream.then, 'undefined')
   const out = await collect(stream)
   assert.equal(out[0].reason.failure.code, 'RATE_LIMIT')
